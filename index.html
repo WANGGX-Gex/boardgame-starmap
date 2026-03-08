@@ -3,16 +3,11 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-<title>BoardGame StarMap V10 - 桌游星图</title>
+<title>BoardGame StarMap - 桌游星图</title>
 <style>
   @import url('https://fonts.googleapis.com/css2?family=Noto+Sans+SC:wght@300;400;500;700&family=Orbitron:wght@400;600;700;900&family=Rajdhani:wght@300;400;500;600;700&display=swap');
-  html, body {
-    touch-action: manipulation;
-    -ms-touch-action: manipulation;
-    overscroll-behavior: none;
-  }
 
-  * { margin: 0; padding: 0; box-sizing: border-box; }
+  * { margin: 0; padding: 0; box-sizing: border-box; touch-action: manipulation; }
 
   :root {
     --bg-deep: #06080f;
@@ -43,7 +38,7 @@
     width: 100vw;
   }
 
-  #graph-container { width: 100vw; height: 100vh; position: fixed; top: 0; left: 0; z-index: 1; }
+  #graph-container { width: 100vw; height: 100vh; position: fixed; top: 0; left: 0; z-index: 1; touch-action: none; }
 
   /* ===== HEADER ===== */
   #header {
@@ -1434,9 +1429,24 @@ function initGraph() {
   graph.d3Force('center', null);
 
   const controls = graph.controls && graph.controls();
-  if (controls) { controls.zoomSpeed = 2.6; controls.rotateSpeed = 0.7; controls.panSpeed = 1.15; controls.enableDamping = true; controls.dampingFactor = 0.08; }
+  if (controls) {
+    controls.zoomSpeed = 2.6;
+    controls.rotateSpeed = 0.7;
+    controls.panSpeed = 1.15;
+    controls.enableDamping = true;
+    controls.dampingFactor = 0.08;
+    // Mobile: enable touch gestures for orbit controls
+    if ('ontouchstart' in window || window.innerWidth <= 920) {
+      controls.enableZoom = true;
+      controls.enableRotate = true;
+      controls.enablePan = true;
+      controls.touches = { ONE: THREE.TOUCH.ROTATE, TWO: THREE.TOUCH.DOLLY_PAN };
+    }
+  }
+  const isMobileDevice = window.innerWidth <= 920 || 'ontouchstart' in window;
+  const dragThreshold = isMobileDevice ? 3 : 6;
   container.addEventListener('pointerdown', e => { pointerDown = {x:e.clientX,y:e.clientY}; isPointerDragging = false; });
-  container.addEventListener('pointermove', e => { if (pointerDown && Math.hypot(e.clientX-pointerDown.x, e.clientY-pointerDown.y) > 6) isPointerDragging = true; });
+  container.addEventListener('pointermove', e => { if (pointerDown && Math.hypot(e.clientX-pointerDown.x, e.clientY-pointerDown.y) > dragThreshold) isPointerDragging = true; });
   container.addEventListener('pointerup', () => { setTimeout(() => { pointerDown = null; isPointerDragging = false; }, 30); });
 
   // Lighting
@@ -1964,6 +1974,21 @@ document.getElementById('json-file-input').addEventListener('change', async (e) 
     showLoadingFallback('所选文件无法解析，请确认它是正确的 graph_data.json。');
   }
 });
+
+// ============== MOBILE TOUCH FIX ==============
+// Prevent double-tap zoom on the entire page (especially buttons)
+// while preserving Three.js pinch/rotate/pan on the graph canvas
+(function() {
+  let lastTouchEnd = 0;
+  document.addEventListener('touchend', function(e) {
+    const now = Date.now();
+    // If two taps happen within 300ms, prevent the second from triggering zoom
+    if (now - lastTouchEnd < 300) {
+      e.preventDefault();
+    }
+    lastTouchEnd = now;
+  }, { passive: false });
+})();
 
 // ============== START ==============
 loadData();
