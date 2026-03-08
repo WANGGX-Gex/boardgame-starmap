@@ -4,9 +4,7 @@
 
 ## ✨ 在线体验
 
-👉 **[点击这里打开星图](https://你的用户名.github.io/boardgame-starmap/)**
-
-> 部署后请将上方链接中的 `你的用户名` 替换为你的 GitHub 用户名。
+👉 **[点击这里打开星图](https://WANGGX-Gex.github.io/boardgame-starmap/)**
 
 ## 📖 关于本项目
 
@@ -74,8 +72,10 @@ npx serve .
 
 ## 👤 作者
 
-Designed By @WANGGX
+Designed By [@WANGGX-Gex](https://github.com/WANGGX-Gex/boardgame-starmap/)
+联系方式：
+微信：wanggx9725
 
 ## 📄 许可
 
-本项目仅供学习交流使用。桌游数据版权归 BoardGameGeek 及各桌游出版商所有。
+本项目仅供学习交流使用。桌游数据版权归 [BoardGameGeek](https://boardgamegeek.com) 及各桌游出版商所有。
