@@ -73,8 +73,6 @@ npx serve .
 ## 👤 作者
 
 Designed By [@WANGGX-Gex](https://github.com/WANGGX-Gex/boardgame-starmap/)
-联系方式：
-微信：wanggx9725
 
 ## 📄 许可
 
