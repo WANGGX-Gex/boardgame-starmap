@@ -7,7 +7,7 @@
 <style>
   @import url('https://fonts.googleapis.com/css2?family=Noto+Sans+SC:wght@300;400;500;700&family=Orbitron:wght@400;600;700;900&family=Rajdhani:wght@300;400;500;600;700&display=swap');
 
-  * { margin: 0; padding: 0; box-sizing: border-box; touch-action: manipulation; }
+  * { margin: 0; padding: 0; box-sizing: border-box; }
 
   :root {
     --bg-deep: #06080f;
@@ -39,6 +39,7 @@
   }
 
   #graph-container { width: 100vw; height: 100vh; position: fixed; top: 0; left: 0; z-index: 1; touch-action: none; }
+  #graph-container canvas { touch-action: none; }
 
   /* ===== HEADER ===== */
   #header {
@@ -46,7 +47,7 @@
     display: flex; align-items: center; justify-content: space-between;
     padding: 12px 24px;
     background: linear-gradient(180deg, rgba(6,8,15,0.95) 0%, rgba(6,8,15,0.6) 70%, transparent 100%);
-    pointer-events: none;
+    pointer-events: none; touch-action: manipulation;
   }
   #header > * { pointer-events: auto; }
 
@@ -118,7 +119,7 @@
     position: fixed; top: 70px; left: 16px; z-index: 103;
     width: 42px; height: 42px; background: var(--bg-panel); border: 1px solid var(--border); border-radius: 50%;
     color: var(--accent-cyan); cursor: pointer; display: flex; align-items: center; justify-content: center;
-    font-size: 18px; transition: all 0.3s;
+    font-size: 18px; transition: all 0.3s; touch-action: manipulation;
   }
   #filter-toggle:hover { border-color: var(--accent-cyan); box-shadow: 0 0 15px rgba(0,229,255,0.2); }
 
@@ -128,6 +129,7 @@
     padding: 14px; transform: translateX(-320px);
     transition: transform 0.35s cubic-bezier(0.4, 0, 0.2, 1);
     box-shadow: var(--shadow-glow); max-height: calc(100vh - 80px); overflow-y: auto; overflow-x: visible;
+    touch-action: manipulation;
   }
   body.filter-open #filter-toggle { left: 328px; background: rgba(8,14,28,0.98); }
   body.filter-open #filter-toggle::before { content:'×'; font-size:20px; line-height:1; }
@@ -248,6 +250,7 @@
     max-height: calc(100vh - 80px); background: var(--bg-panel); border: 1px solid var(--border);
     border-radius: var(--radius); overflow-y: auto;
     transition: right 0.35s cubic-bezier(0.4, 0, 0.2, 1); box-shadow: var(--shadow-glow);
+    touch-action: manipulation;
   }
   #detail-panel.open { right: 16px; }
 
@@ -288,7 +291,7 @@
   .header-meta { font-size:11px; color:var(--text-dim); margin-top:4px; }
   #view-controls { position:fixed; right:18px; bottom:18px; z-index:102; display:flex; flex-direction:column; gap:10px; }
   .view-group { display:flex; flex-direction:column; gap:8px; }
-  .view-btn { width:46px; height:46px; background:linear-gradient(180deg, rgba(9,18,34,0.96), rgba(6,11,22,0.96)); border:1px solid rgba(80,140,255,0.18); border-radius:16px; color:var(--accent-cyan); cursor:pointer; display:flex; align-items:center; justify-content:center; font-size:20px; box-shadow:0 12px 32px rgba(0,0,0,0.22), 0 0 18px rgba(74,158,255,0.08); backdrop-filter: blur(10px); }
+  .view-btn { width:46px; height:46px; background:linear-gradient(180deg, rgba(9,18,34,0.96), rgba(6,11,22,0.96)); border:1px solid rgba(80,140,255,0.18); border-radius:16px; color:var(--accent-cyan); cursor:pointer; display:flex; align-items:center; justify-content:center; font-size:20px; box-shadow:0 12px 32px rgba(0,0,0,0.22), 0 0 18px rgba(74,158,255,0.08); backdrop-filter: blur(10px); touch-action: manipulation; }
   .view-btn.rect { width:60px; min-width:60px; height:42px; border-radius:14px; padding:0 10px; font-size:12px; font-family:'Noto Sans SC',sans-serif; }
   .view-btn:hover { border-color: var(--accent-cyan); transform: translateY(-1px); }
 
@@ -1415,7 +1418,16 @@ function initGraph() {
     .cooldownTicks(100)
     .onNodeClick(onNodeClick)
     .onNodeHover(onNodeHover)
-    .onBackgroundClick(() => { clearHighlight(); closeDetail(); });
+    .onBackgroundClick(() => { clearHighlight(); closeDetail(); })
+    .enableNodeDrag(true)
+    .onNodeDrag(node => {
+      // During drag, mark as dragging so click won't fire
+      isPointerDragging = true;
+    })
+    .onNodeDragEnd(node => {
+      // Brief delay before clearing drag state
+      setTimeout(() => { isPointerDragging = false; }, 50);
+    });
 
   // Forces
   graph.d3Force('charge').strength(-24).distanceMax(260);
@@ -1434,12 +1446,15 @@ function initGraph() {
     controls.panSpeed = 1.15;
     controls.enableDamping = true;
     controls.dampingFactor = 0.08;
-    // Mobile: enable touch gestures for orbit controls
+    // Mobile touch config
     if ('ontouchstart' in window || window.innerWidth <= 920) {
       controls.enableZoom = true;
       controls.enableRotate = true;
       controls.enablePan = true;
+      // ONE finger = rotate orbit, TWO fingers = zoom (dolly) + pan
       controls.touches = { ONE: THREE.TOUCH.ROTATE, TWO: THREE.TOUCH.DOLLY_PAN };
+      controls.zoomSpeed = 1.8; // Slightly slower zoom on mobile for precision
+      controls.rotateSpeed = 0.5;
     }
   }
   const isMobileDevice = window.innerWidth <= 920 || 'ontouchstart' in window;
