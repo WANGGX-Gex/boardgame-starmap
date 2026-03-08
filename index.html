@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-<title>BoardGame StarMap - 桌游星图</title>
+<title>BoardGame StarMap V10 - 桌游星图</title>
 <style>
   @import url('https://fonts.googleapis.com/css2?family=Noto+Sans+SC:wght@300;400;500;700&family=Orbitron:wght@400;600;700;900&family=Rajdhani:wght@300;400;500;600;700&display=swap');
 
@@ -365,13 +365,12 @@
     }
     #detail-panel.open { transform: translateY(0); right: 0; }
 
-    /* Drag handle for bottom sheet */
+    /* Drag handle - keep element for padding but hide the bar */
     .detail-drag-handle {
-      display: flex; justify-content: center; padding: 10px 0 4px; cursor: grab;
+      display: block; padding: 6px 0 0; cursor: default;
     }
     .detail-drag-handle::before {
-      content: ''; width: 36px; height: 4px; border-radius: 2px;
-      background: rgba(255,255,255,0.2);
+      display: none;
     }
 
     .detail-header { padding: 12px 16px 14px; }
@@ -381,8 +380,8 @@
     .detail-title { font-size: 19px; }
     .detail-subtitle-en { font-size: 15px; }
 
-    /* Hide X close button on mobile — drag handle is the dismiss affordance */
-    .detail-close { display: none; }
+    /* Show X close button on mobile */
+    .detail-close { display: flex; top: 10px; right: 10px; width: 32px; height: 32px; font-size: 14px; }
 
     /* BGG link extra bottom spacing */
     .detail-bgg-link { margin-bottom: 20px; }
@@ -1924,15 +1923,22 @@ document.addEventListener('keydown', e => {
 // ============== MOBILE BOTTOM SHEET DRAG ==============
 (function initBottomSheetDrag() {
   const panel = document.getElementById('detail-panel');
-  const handle = panel.querySelector('.detail-drag-handle');
-  if (!handle) return;
-  let startY = 0, startTranslate = 0, isDragging = false;
+  if (!panel) return;
+  let startY = 0, startTranslate = 0, isDragging = false, startTime = 0;
 
-  handle.addEventListener('touchstart', e => {
+  // Listen on entire panel, not just handle
+  panel.addEventListener('touchstart', e => {
     if (window.innerWidth > 920) return;
+    // Only start drag if touching near the top of the panel or if scrolled to top
+    const panelRect = panel.getBoundingClientRect();
+    const touchY = e.touches[0].clientY;
+    const isAtTop = panel.scrollTop <= 0;
+    const isInHeader = (touchY - panelRect.top) < 120;
+    if (!isAtTop && !isInHeader) return;
     isDragging = true;
     startY = e.touches[0].clientY;
     startTranslate = 0;
+    startTime = Date.now();
     panel.style.transition = 'none';
   }, { passive: true });
 
@@ -1949,7 +1955,10 @@ document.addEventListener('keydown', e => {
     if (!isDragging) return;
     isDragging = false;
     panel.style.transition = '';
-    if (startTranslate > 80) {
+    const elapsed = Date.now() - startTime;
+    const velocity = startTranslate / Math.max(elapsed, 1);
+    // Close if dragged far enough (50px) or fast enough (velocity > 0.4)
+    if (startTranslate > 50 || velocity > 0.4) {
       closeDetail();
     } else {
       panel.style.transform = '';
