@@ -431,7 +431,7 @@
   }
   #help-modal.open { display:flex; }
   .help-card {
-    width:min(560px, 100%); background:var(--bg-panel); border:1px solid var(--border); border-radius:14px; padding:22px 22px 16px;
+    width:min(560px, 100%); max-height:calc(100vh - 60px); overflow-y:auto; background:var(--bg-panel); border:1px solid var(--border); border-radius:14px; padding:22px 22px 16px;
     box-shadow:var(--shadow-glow);
   }
   .help-card h3 { font-size:22px; margin-bottom:12px; color:var(--accent-cyan); font-family:'Orbitron',sans-serif; }
@@ -624,10 +624,10 @@
           </div>
         </div>
       </div>
-      <div class="filter-actions">
-        <button class="filter-btn" onclick="clearFocusAndApply()">回到全局筛选</button>
-        <button class="filter-btn secondary" onclick="resetGlobalFilters()">恢复默认条件</button>
-      </div>
+    </div>
+    <div class="filter-actions">
+      <button class="filter-btn" onclick="clearFocusAndApply()">回到全局筛选</button>
+      <button class="filter-btn secondary" onclick="resetGlobalFilters()">恢复默认条件</button>
     </div>
   </div>
 
@@ -661,6 +661,7 @@
 
 <div id="view-controls">
   <div class="view-group">
+    <button class="view-btn" onclick="refreshGraph()" title="刷新星图">↻</button>
     <button class="view-btn" onclick="zoomInView()" title="放大">＋</button>
     <button class="view-btn" onclick="zoomOutView()" title="缩小">－</button>
     <button class="view-btn rect" onclick="focusCurrentSelection()" title="聚焦当前">定位</button>
@@ -689,6 +690,16 @@
         <div class="help-relation"><span class="help-line reimplements"></span><strong>重制</strong>：A 基于 B 进行了重制 / 改良</div>
         <div class="help-relation"><span class="help-line integrates"></span><strong>兼容</strong>：两款游戏彼此独立，同时可以兼容游戏</div>
         <div class="help-relation"><span class="help-line contains"></span><strong>包含</strong>：常见于“大盒”，A 中包含了 B</div>
+      </div>
+    </div>
+    <div class="help-section">
+      <div class="help-section-title">操作方式</div>
+      <div class="help-relations" style="font-size:12px;color:var(--text-secondary);line-height:1.7">
+        <div><strong>旋转视角</strong>：鼠标左键拖拽空白处 ｜ 手机单指滑动空白处</div>
+        <div><strong>缩放</strong>：鼠标滚轮 ｜ 手机双指捏合/张开</div>
+        <div><strong>平移</strong>：鼠标右键拖拽 ｜ 手机双指同时滑动</div>
+        <div><strong>拖动星球</strong>：按住星球拖动即可移动它的位置</div>
+        <div><strong>查看详情</strong>：点击任意星球进入聚焦模式</div>
       </div>
     </div>
     <div class="help-meta">
@@ -1221,6 +1232,12 @@ function applyFilters(reselectId = null) {
   const filtered = getFilteredData();
   currentData = filtered;
   recomputeLabelNodes(filtered);
+
+  // Clear stale highlight references before rebuilding graph
+  // (old link/node objects are no longer in the new graph data)
+  highlightNodes.clear();
+  highlightLinks.clear();
+
   const newData = {
     nodes: filtered.nodes.map(n => ({...n})),
     links: filtered.links.map(l => ({ source: typeof l.source === 'object' ? l.source.id : l.source, target: typeof l.target === 'object' ? l.target.id : l.target, type: l.type }))
@@ -1228,13 +1245,16 @@ function applyFilters(reselectId = null) {
   graph.graphData(newData);
   graph.d3ReheatSimulation();
   updateStats(filtered);
-  if (reselectId) {
+
+  // Re-apply highlight for focused/selected node after graph data is rebuilt
+  const targetId = reselectId || focusNodeId;
+  if (targetId) {
     requestAnimationFrame(() => {
-      const tn = graph.graphData().nodes.find(n => n.id === reselectId);
+      const tn = graph.graphData().nodes.find(n => n.id === targetId);
       if (tn) {
         selectedNode = tn;
         setHighlight(tn);
-        showDetail(nodeMap[reselectId] || tn);
+        if (reselectId) showDetail(nodeMap[reselectId] || tn);
       }
     });
   }
@@ -1415,7 +1435,8 @@ function initGraph() {
     .linkDirectionalArrowRelPos(1)
     .d3AlphaDecay(0.045)
     .d3VelocityDecay(0.45)
-    .cooldownTicks(100)
+    .cooldownTicks(200)
+    .warmupTicks(0)
     .onNodeClick(onNodeClick)
     .onNodeHover(onNodeHover)
     .onBackgroundClick(() => { clearHighlight(); closeDetail(); })
@@ -1425,7 +1446,8 @@ function initGraph() {
       isPointerDragging = true;
     })
     .onNodeDragEnd(node => {
-      // Brief delay before clearing drag state
+      // Re-heat simulation so nearby nodes react
+      graph.d3ReheatSimulation();
       setTimeout(() => { isPointerDragging = false; }, 50);
     });
 
@@ -1589,6 +1611,30 @@ function focusCurrentSelection() {
   if (selectedNode) flyToNode(selectedNode, 500);
   else resetOverview();
 }
+
+function refreshGraph() {
+  if (!graph) return;
+  // Re-heat simulation to unstick frozen nodes
+  graph.d3ReheatSimulation();
+  // Re-apply current filters to rebuild graph data cleanly
+  applyFilters();
+  // Fit view after a short delay
+  setTimeout(() => resetOverview(true), 200);
+  showToast('星图已刷新');
+}
+
+// ============== WINDOW RESIZE ==============
+let resizeDebounce = null;
+window.addEventListener('resize', () => {
+  clearTimeout(resizeDebounce);
+  resizeDebounce = setTimeout(() => {
+    if (graph) {
+      // Update renderer and camera to match new window size
+      graph.width(window.innerWidth);
+      graph.height(window.innerHeight);
+    }
+  }, 200);
+});
 
 // ============== DETAIL PANEL ==============
 
