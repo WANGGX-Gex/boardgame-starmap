@@ -1735,7 +1735,7 @@ function showDetail(node) {
   if (node.class === 'game' && Array.isArray(node.related_games?.base_games) && node.related_games.base_games.length) h += `<div class="expansion-badge">扩展</div>`;
   h += `</div>`;
   h += `<div class="detail-title" style="color:${c}">${displayName(node)}</div>`;
-  if (node.class !== 'game' && enName) h += `<div class="detail-subtitle-en">${enName}</div>`;
+  if (enName) h += `<div class="detail-subtitle-en">${enName}</div>`;
   if (altZh) h += `<div class="detail-subtitle">别名：${altZh}</div>`;
   if (node.class === 'publisher') {
     const country = getPublisherCountryDisplay(node);
