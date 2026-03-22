@@ -1,0 +1,9 @@
+# 桌游星图 V3 — Python 依赖
+# 安装：pip install -r requirements.txt
+
+requests>=2.31.0
+cloudscraper>=1.2.71
+lxml>=5.0.0
+opencc-python-reimplemented>=0.1.7
+pyyaml>=6.0
+beautifulsoup4>=4.12.0

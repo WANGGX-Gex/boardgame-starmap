@@ -1,0 +1,28 @@
+# BoardGame StarMap V3 — 配置文件
+# 复制此文件为 config.yaml 并填入真实值
+# config.yaml 已在 .gitignore 中，不会上传到 GitHub
+
+bgg:
+  # BGG XML API2 Token（主力采集方式）
+  xml_api_token: "YOUR_TOKEN_HERE"
+  xml_api_base: "https://boardgamegeek.com/xmlapi2"
+
+  # Legacy API（备用，不需要 Token）
+  legacy_api_base: "https://api.geekdo.com/api"
+
+  # 请求控制
+  sleep_between: 1.5        # 请求间隔（秒）
+  sleep_on_error: 15         # 出错后等待（秒）
+  max_retries: 3             # 最大重试次数
+  batch_size: 20             # XML API 批量查询每批数量（最多 20）
+
+# 清洗参数
+cleaning:
+  min_ratings_for_related: 50   # 关联桌游最低评价人数
+  max_desc_length: 300          # 描述截断长度
+  min_games_for_fill: 5         # publisher_to_fill.csv 输出门槛
+
+# Git 自动推送
+git:
+  auto_push: true
+  branch: "main"
