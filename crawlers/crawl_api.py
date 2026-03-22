@@ -70,10 +70,18 @@ def get_fetched_ids(conn, table):
     c.execute(f"SELECT game_id FROM {table}")
     return set(row[0] for row in c.fetchall())
 
-def save_game(conn, game_id, raw_json, dynamic_json):
+def save_game_new(conn, game_id, raw_json, dynamic_json):
+    """保存新游戏（详情+评分都写入）"""
     c = conn.cursor()
     c.execute("INSERT OR REPLACE INTO games_raw (game_id, json_data) VALUES (?, ?)",
               (game_id, json.dumps(raw_json, ensure_ascii=False)))
+    c.execute("INSERT OR REPLACE INTO games_dynamic (game_id, json_data) VALUES (?, ?)",
+              (game_id, json.dumps(dynamic_json, ensure_ascii=False)))
+    conn.commit()
+
+def save_dynamic_only(conn, game_id, dynamic_json):
+    """仅更新评分排名（保留已有的 games_raw 不动，保护 primarylink 等数据）"""
+    c = conn.cursor()
     c.execute("INSERT OR REPLACE INTO games_dynamic (game_id, json_data) VALUES (?, ?)",
               (game_id, json.dumps(dynamic_json, ensure_ascii=False)))
     conn.commit()
@@ -310,26 +318,26 @@ def load_target_ids():
     print(f"📦 加载了 {len(ids)} 个目标 ID")
     return ids
 
-def crawl_batch(conn, target_ids, batch_name="桌游"):
-    """批量采集一组桌游"""
+def crawl_new_games(conn, target_ids, batch_name="桌游"):
+    """采集新游戏（详情+评分，跳过已有的）"""
     already = get_fetched_ids(conn, 'games_raw')
     todo = [gid for gid in target_ids if gid not in already]
     skipped = len(target_ids) - len(todo)
 
     if skipped > 0:
-        print(f"⏭️  跳过已有 {skipped} 个，剩余 {len(todo)} 个")
+        print(f"⏭️  跳过已有 {skipped} 个，剩余 {len(todo)} 个新游戏")
     if not todo:
-        print(f"🎉 {batch_name}全部已完成！")
+        print(f"🎉 {batch_name}无新增！")
         return []
 
-    print(f"🎯 开始采集 {batch_name}：{len(todo)} 个\n")
+    print(f"🎯 开始采集 {batch_name}：{len(todo)} 个新游戏\n")
     all_discovered = []
 
     for i in range(0, len(todo), BATCH_SIZE):
         batch = todo[i:i+BATCH_SIZE]
         batch_num = i // BATCH_SIZE + 1
         total_batches = (len(todo) + BATCH_SIZE - 1) // BATCH_SIZE
-        print(f"[批次 {batch_num}/{total_batches}] 🔍 获取 {len(batch)} 个游戏...")
+        print(f"[批次 {batch_num}/{total_batches}] 🔍 获取 {len(batch)} 个新游戏...")
 
         root = fetch_xml(batch)
         if root is None:
@@ -340,9 +348,9 @@ def crawl_batch(conn, target_ids, batch_name="桌游"):
         for item_elem in items:
             try:
                 game_id, raw_data, dynamic_data = xml_to_geekdo_format(item_elem)
-                save_game(conn, game_id, raw_data, dynamic_data)
+                save_game_new(conn, game_id, raw_data, dynamic_data)
                 name = raw_data['item']['name']
-                print(f"  ✅ {name} (ID={game_id})")
+                print(f"  ✅ [新] {name} (ID={game_id})")
 
                 related = extract_related_ids(raw_data, game_id)
                 for r in related:
@@ -355,8 +363,47 @@ def crawl_batch(conn, target_ids, batch_name="桌游"):
         if i + BATCH_SIZE < len(todo):
             time.sleep(SLEEP)
 
-    print(f"\n🏁 {batch_name}采集完毕，发现 {len(all_discovered)} 个关联桌游")
+    print(f"\n🏁 {batch_name}新游戏采集完毕，发现 {len(all_discovered)} 个关联桌游")
     return all_discovered
+
+def refresh_dynamic(conn, target_ids):
+    """刷新已有游戏的排名评分（不覆盖 games_raw，保护 primarylink）"""
+    already = get_fetched_ids(conn, 'games_raw')
+    to_refresh = [gid for gid in target_ids if gid in already]
+
+    if not to_refresh:
+        print("  无需刷新")
+        return
+
+    print(f"📊 刷新 {len(to_refresh)} 个游戏的排名评分...\n")
+    updated = 0
+
+    for i in range(0, len(to_refresh), BATCH_SIZE):
+        batch = to_refresh[i:i+BATCH_SIZE]
+        batch_num = i // BATCH_SIZE + 1
+        total_batches = (len(to_refresh) + BATCH_SIZE - 1) // BATCH_SIZE
+        print(f"[批次 {batch_num}/{total_batches}] 📊 刷新 {len(batch)} 个...")
+
+        root = fetch_xml(batch)
+        if root is None:
+            print("  ❌ 批次获取失败")
+            raise ConnectionError("XML API 认证失败")
+
+        items = root.findall('item')
+        for item_elem in items:
+            try:
+                game_id, raw_data, dynamic_data = xml_to_geekdo_format(item_elem)
+                # 只更新 dynamic，不动 raw（保护 primarylink 等旧数据）
+                save_dynamic_only(conn, game_id, dynamic_data)
+                updated += 1
+            except Exception as e:
+                print(f"  ⚠️ 解析异常: {e}")
+
+        conn.commit()
+        if i + BATCH_SIZE < len(to_refresh):
+            time.sleep(SLEEP)
+
+    print(f"\n🏁 排名评分刷新完毕，更新 {updated} 个游戏")
 
 def main():
     print("🚀 桌游星图 - XML API2 数据采集")
@@ -366,15 +413,17 @@ def main():
     conn = init_db()
     core_ids = load_target_ids()
 
-    # 第 1 轮：核心桌游
+    # =====================
+    # 第 1 步：采集新游戏（跳过已有的）
+    # =====================
     print("=" * 60)
-    print("📡 第 1 轮：Top 1000 核心桌游")
+    print("📡 第 1 步：采集新增核心桌游")
     print("=" * 60)
-    crawl_batch(conn, core_ids, "Top 1000 核心桌游")
+    crawl_new_games(conn, core_ids, "Top 1000 核心桌游")
 
-    # 第 2 轮：关联桌游
+    # 第 2 步：采集关联桌游（跳过已有的）
     print("\n" + "=" * 60)
-    print("📡 第 2 轮：关联桌游")
+    print("📡 第 2 步：采集新增关联桌游")
     print("=" * 60)
     already = get_fetched_ids(conn, 'games_raw')
     c = conn.cursor()
@@ -384,9 +433,19 @@ def main():
 
     if todo_2:
         print(f"🔍 发现 {len(todo_2)} 个待补充的关联桌游")
-        crawl_batch(conn, todo_2, "关联桌游")
+        crawl_new_games(conn, todo_2, "关联桌游")
     else:
-        print("✨ 无需补充")
+        print("✨ 无新增关联桌游")
+
+    # =====================
+    # 第 3 步：刷新所有游戏的排名评分（每日核心任务）
+    # 只更新 games_dynamic，不动 games_raw（保护 primarylink）
+    # =====================
+    print("\n" + "=" * 60)
+    print("📊 第 3 步：刷新排名评分（每日更新）")
+    print("=" * 60)
+    all_ids = list(get_fetched_ids(conn, 'games_raw'))
+    refresh_dynamic(conn, all_ids)
 
     # 统计
     c = conn.cursor()
