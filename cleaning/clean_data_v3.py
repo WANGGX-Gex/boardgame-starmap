@@ -637,23 +637,100 @@ def main():
     if name_overrides:
         print(f"  📝 已加载中文译名修正: {len(name_overrides)} 条 (game_name_override.csv)")
 
-    # 2. 过滤桌游
+    # 2. 过滤桌游（含距离限制）
     print("\n🧮 过滤桌游...")
-    included_games = {}
-    excluded = 0
+
+    # 2a. 预建游戏间邻接表，用于 BFS 距离计算
+    #     只看桌游之间的关联关系（expansion, reimplements, integrates, contains 等）
+    #     不含人物/出版商/机制/类别
+    GAME_RELATION_KEYS = [
+        'boardgameexpansion', 'expandsboardgame',
+        'reimplements', 'reimplementation',
+        'boardgameintegration',
+        'contains', 'containedin',
+    ]
+    MAX_DISTANCE = 2  # 只保留离核心桌游 ≤ 2 步的游戏
+
+    print(f"  📐 计算到核心桌游的距离（最大 {MAX_DISTANCE} 步）...")
+    all_games_raw = {}
+    adjacency = {}  # game_id → set of neighbor game_ids
+
     c.execute("SELECT game_id, json_data FROM games_raw")
     for game_id, json_text in c.fetchall():
         game_id = str(game_id)
-        try: data = json.loads(json_text)
-        except: continue
-        item = data.get('item',{})
-        dyn = dynamic_map.get(game_id,{})
+        try:
+            data = json.loads(json_text)
+        except:
+            continue
+        all_games_raw[game_id] = data
+        item_links = data.get('item', {}).get('links', {}) or {}
+        neighbors = set()
+        for rel_key in GAME_RELATION_KEYS:
+            for linked in (item_links.get(rel_key, []) or []):
+                lid = str(linked.get('objectid', '')).strip()
+                if lid:
+                    neighbors.add(lid)
+        adjacency[game_id] = neighbors
+
+    # 确保邻接关系是双向的（A→B 意味着 B→A）
+    for gid, neighbors in list(adjacency.items()):
+        for nid in neighbors:
+            if nid not in adjacency:
+                adjacency[nid] = set()
+            adjacency[nid].add(gid)
+
+    # BFS：从核心桌游出发，计算每个游戏的最短距离
+    from collections import deque
+    distance = {}
+    queue = deque()
+    for cid in core_ids:
+        if cid in all_games_raw:
+            distance[cid] = 0
+            queue.append(cid)
+
+    while queue:
+        gid = queue.popleft()
+        cur_dist = distance[gid]
+        if cur_dist >= MAX_DISTANCE:
+            continue
+        for neighbor in adjacency.get(gid, []):
+            if neighbor not in distance and neighbor in all_games_raw:
+                distance[neighbor] = cur_dist + 1
+                queue.append(neighbor)
+
+    reachable_ids = set(distance.keys())
+    dist_stats = {}
+    for d in distance.values():
+        dist_stats[d] = dist_stats.get(d, 0) + 1
+    for d in sorted(dist_stats):
+        label = "核心桌游" if d == 0 else f"距离 {d}"
+        print(f"    {label}: {dist_stats[d]} 个")
+    unreachable = len(all_games_raw) - len(reachable_ids)
+    if unreachable > 0:
+        print(f"    距离 > {MAX_DISTANCE}（排除）: {unreachable} 个")
+
+    # 2b. 过滤：核心桌游直接纳入，非核心须距离 ≤ MAX_DISTANCE 且满足评分门槛
+    included_games = {}
+    excluded = 0
+    excluded_distance = 0
+    for game_id, data in all_games_raw.items():
+        item = data.get('item', {})
+        dyn = dynamic_map.get(game_id, {})
         is_core = game_id in core_ids
-        if not is_core:
-            if is_promo(item.get('name','')) or dyn.get('usersrated',0) < MIN_RATINGS_FOR_RELATED:
-                excluded += 1; continue
-        included_games[game_id] = data
-    print(f"  纳入: {len(included_games)}, 过滤: {excluded}")
+        if is_core:
+            included_games[game_id] = data
+        else:
+            # 距离检查
+            if game_id not in reachable_ids:
+                excluded_distance += 1
+                excluded += 1
+                continue
+            # 原有过滤条件
+            if is_promo(item.get('name', '')) or dyn.get('usersrated', 0) < MIN_RATINGS_FOR_RELATED:
+                excluded += 1
+                continue
+            included_games[game_id] = data
+    print(f"  纳入: {len(included_games)}, 过滤: {excluded}（其中距离过远: {excluded_distance}）")
 
     # 3. 构建节点与连线
     print("\n🔧 构建节点...")
@@ -884,7 +961,7 @@ def main():
             'publisher_nodes':sum(1 for n in nodes.values() if n['class']=='publisher'),
             'link_type_counts':dict(lt_counts),
             'name_policy':'v3: OpenCC简繁 + 日文排除; display永远简体; game_name_override优先',
-            'core_policy':'rank动态计算Top1000; top_1000_ids.txt作为fallback',
+            'core_policy':'rank动态计算Top1000; 非核心桌游须距离核心≤2步; top_1000_ids.txt作为fallback',
             'publisher_policy':'published_by_primary / published_by_co / published_by(兼容)',
             'country_policy':'国家和地区; TW→中国台湾(无emoji); HK🇭🇰; MO🇲🇴',
             'min_ratings_for_related':MIN_RATINGS_FOR_RELATED,

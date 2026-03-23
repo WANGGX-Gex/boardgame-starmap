@@ -7,6 +7,10 @@ bgg:
   xml_api_token: "YOUR_TOKEN_HERE"
   xml_api_base: "https://boardgamegeek.com/xmlapi2"
 
+  # BGG 登录凭据（用于下载 data dumps CSV，Bearer Token 不可用于此）
+  username: "YOUR_BGG_USERNAME"
+  password: "YOUR_BGG_PASSWORD"
+
   # Legacy API（备用，不需要 Token）
   legacy_api_base: "https://api.geekdo.com/api"
 

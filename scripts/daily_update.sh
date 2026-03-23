@@ -34,16 +34,10 @@ echo ""
 echo "📥 [0/5] 同步 GitHub..."
 git pull origin main --rebase || git pull origin main
 
-# ── 1. 更新 Top 1000（仅周一）──
-DAY_OF_WEEK=$(date +%u)
-if [ "$DAY_OF_WEEK" -eq 1 ]; then
-    echo ""
-    echo "📋 [1/5] 周一：更新 Top 1000 列表..."
-    python3 crawlers/get_top_ids.py || echo "⚠️ Top 1000 更新失败，使用上次的列表"
-else
-    echo ""
-    echo "⏭️  [1/5] 非周一，跳过 Top 1000 更新"
-fi
+# ── 1. 更新 Top 1000（每天下载最新 CSV）──
+echo ""
+echo "📋 [1/5] 下载 BGG ranks CSV 并更新 Top 1000..."
+python3 crawlers/get_top_ids.py || echo "⚠️ Top 1000 更新失败，使用上次的列表"
 
 # ── 2. 采集桌游数据（API 优先，Legacy 兜底）──
 echo ""
@@ -59,21 +53,22 @@ else
     fi
 fi
 
-# ── 2b. 周一补查 primarylink（旧版API，只查新增游戏）──
-if [ "$DAY_OF_WEEK" -eq 1 ]; then
+# ── 2b. 周二补查 primarylink（旧版API，只查新增游戏）──
+DAY_OF_WEEK=$(date +%u)
+if [ "$DAY_OF_WEEK" -eq 2 ]; then
     echo ""
-    echo "🔧 [2b] 周一：补查新增游戏的 primarylink..."
+    echo "🔧 [2b] 周二：补查新增游戏的 primarylink..."
     python3 crawlers/patch_primary.py || echo "⚠️ primarylink 补查异常"
 fi
 
-# ── 3. 补充出版商和人物（始终用旧版 API）──
+# ── 3. 补充出版商和人物（始终用旧版 API，各最多 30 分钟）──
 echo ""
 echo "🏢 [3/5] 补充出版商详情..."
-python3 crawlers/crawl_publishers.py || echo "⚠️ 出版商采集异常"
+timeout 1800 python3 crawlers/crawl_publishers.py || echo "⚠️ 出版商采集异常或超时（30分钟），跳过"
 
 echo ""
 echo "👤 [3/5] 补充人物详情..."
-python3 crawlers/crawl_persons.py || echo "⚠️ 人物采集异常"
+timeout 1800 python3 crawlers/crawl_persons.py || echo "⚠️ 人物采集异常或超时（30分钟），跳过"
 
 # ── 4. 数据清洗 ──
 echo ""

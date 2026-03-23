@@ -7,6 +7,7 @@ import sqlite3
 import json
 import time
 import cloudscraper
+import requests
 
 BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 DB_PATH = os.path.join(BASE_DIR, "data", "bgg_starmap.db")
@@ -30,10 +31,16 @@ scraper = cloudscraper.create_scraper(browser={
     'browser': 'chrome', 'platform': 'windows', 'desktop': True
 })
 
+def _recreate_scraper():
+    global scraper
+    scraper = cloudscraper.create_scraper(browser={
+        'browser': 'chrome', 'platform': 'windows', 'desktop': True
+    })
+
 def fetch_json(url):
     for attempt in range(MAX_RETRIES):
         try:
-            r = scraper.get(url, timeout=20)
+            r = scraper.get(url, timeout=(10, 20))  # (connect_timeout, read_timeout)
             if r.status_code == 200 and 'json' in r.headers.get('content-type', ''):
                 return r.json()
             elif r.status_code == 429:
@@ -41,9 +48,16 @@ def fetch_json(url):
                 time.sleep(SLEEP_ON_ERROR)
             elif r.status_code == 404:
                 return None
+            elif r.status_code == 403:
+                print(f"  ⚠️ 403 被拦截（Cloudflare），等待{SLEEP_ON_ERROR}秒...")
+                time.sleep(SLEEP_ON_ERROR)
+                _recreate_scraper()
             else:
                 print(f"  ❌ 状态码 {r.status_code}")
                 time.sleep(5)
+        except requests.exceptions.Timeout:
+            print(f"  ⏰ 请求超时 (重试 {attempt+1}/{MAX_RETRIES})")
+            time.sleep(5)
         except Exception as e:
             print(f"  🌐 网络错误: {e} (重试 {attempt+1}/{MAX_RETRIES})")
             time.sleep(5)

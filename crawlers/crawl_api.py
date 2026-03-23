@@ -281,7 +281,13 @@ def xml_to_geekdo_format(item_elem):
     return game_id, raw_data, dynamic_data
 
 def extract_related_ids(raw_data, source_id):
-    """从转换后的 JSON 中提取关联桌游 ID"""
+    """从转换后的 JSON 中提取关联桌游 ID
+    
+    注意：不包含 contains/containedin（compilation 关系）。
+    Compilation 类游戏（如 Miscellaneous Game Compilation）会包含数十个子游戏，
+    每个子游戏又有自己的关联，导致图谱无限膨胀。
+    这些关系仍保留在 games_raw 中供 clean_data_v3 生成连线，但不触发爬取。
+    """
     related = []
     links = raw_data.get('item', {}).get('links', {})
 
@@ -291,8 +297,7 @@ def extract_related_ids(raw_data, source_id):
         'reimplementation': 'reimplemented_by',
         'reimplements': 'reimplements',
         'boardgameintegration': 'integrates',
-        'contains': 'contains',
-        'containedin': 'contained_in',
+        # 'contains' 和 'containedin' 故意不包含，避免 compilation 爆炸
     }
 
     for link_type, rel_name in relation_map.items():
@@ -318,8 +323,12 @@ def load_target_ids():
     print(f"📦 加载了 {len(ids)} 个目标 ID")
     return ids
 
-def crawl_new_games(conn, target_ids, batch_name="桌游"):
-    """采集新游戏（详情+评分，跳过已有的）"""
+def crawl_new_games(conn, target_ids, batch_name="桌游", discover=True):
+    """采集新游戏（详情+评分，跳过已有的）
+    
+    discover: 是否将关联桌游写入 discovered_ids（仅第 1 步应为 True）
+              第 2 步爬关联桌游时设为 False，防止无限展开
+    """
     already = get_fetched_ids(conn, 'games_raw')
     todo = [gid for gid in target_ids if gid not in already]
     skipped = len(target_ids) - len(todo)
@@ -352,10 +361,11 @@ def crawl_new_games(conn, target_ids, batch_name="桌游"):
                 name = raw_data['item']['name']
                 print(f"  ✅ [新] {name} (ID={game_id})")
 
-                related = extract_related_ids(raw_data, game_id)
-                for r in related:
-                    save_discovered(conn, r['id'], r['source_id'], r['relation'])
-                all_discovered.extend(related)
+                if discover:
+                    related = extract_related_ids(raw_data, game_id)
+                    for r in related:
+                        save_discovered(conn, r['id'], r['source_id'], r['relation'])
+                    all_discovered.extend(related)
             except Exception as e:
                 print(f"  ⚠️ 解析异常: {e}")
 
@@ -405,6 +415,90 @@ def refresh_dynamic(conn, target_ids):
 
     print(f"\n🏁 排名评分刷新完毕，更新 {updated} 个游戏")
 
+# ============================================================
+# CSV 快速更新排名（不需要 API 请求）
+# ============================================================
+CSV_FILE = os.path.join(BASE_DIR, 'data', 'boardgames_ranks.csv')
+
+def refresh_dynamic_from_csv(conn):
+    """
+    从 boardgames_ranks.csv 快速更新排名数据（rank, baverage, average, usersrated）。
+    保留数据库中已有的 avgweight, numowned, best_players 不动。
+    耗时：< 1 秒（vs API 全量刷新 ~40 分钟）
+    """
+    import csv
+
+    if not os.path.exists(CSV_FILE):
+        print(f"  ❌ 未找到 {CSV_FILE}，跳过 CSV 更新")
+        return False
+
+    # 读取 CSV
+    csv_data = {}  # game_id → {rank, bayesaverage, average, usersrated}
+    with open(CSV_FILE, 'r', encoding='utf-8') as f:
+        reader = csv.DictReader(f)
+        for row in reader:
+            try:
+                gid = row['id'].strip()
+                rank_str = row.get('rank', '0').strip()
+                rank = int(rank_str) if rank_str.isdigit() else 0
+                bavg = float(row.get('bayesaverage', '0') or '0')
+                avg = float(row.get('average', '0') or '0')
+                rated = int(float(row.get('usersrated', '0') or '0'))
+                csv_data[gid] = {
+                    'rank': rank,
+                    'baverage': bavg,
+                    'average': avg,
+                    'usersrated': rated,
+                }
+            except Exception:
+                continue
+
+    print(f"  📄 CSV 加载: {len(csv_data)} 个游戏")
+
+    # 读取数据库中已有的 dynamic 数据，合并更新
+    c = conn.cursor()
+    c.execute("SELECT game_id, json_data FROM games_dynamic")
+    existing = {str(row[0]): row[1] for row in c.fetchall()}
+
+    updated = 0
+    for game_id, csv_info in csv_data.items():
+        if game_id not in existing:
+            # 数据库里没有这个游戏的 dynamic，跳过
+            # （CSV 包含所有 17 万游戏，但我们只关心数据库里有的）
+            continue
+
+        try:
+            dyn = json.loads(existing[game_id])
+        except Exception:
+            dyn = {'item': {'rankinfo': [], 'stats': {}, 'polls': {}}}
+
+        item = dyn.setdefault('item', {})
+        stats = item.setdefault('stats', {})
+        rankinfo = item.get('rankinfo', [])
+
+        # 更新 stats 中 CSV 有的字段（保留 avgweight, numowned 不动）
+        stats['average'] = csv_info['average']
+        stats['usersrated'] = csv_info['usersrated']
+
+        # 更新 rankinfo
+        if rankinfo:
+            rankinfo[0]['rank'] = csv_info['rank']
+            rankinfo[0]['baverage'] = csv_info['baverage']
+        else:
+            item['rankinfo'] = [{
+                'rank': csv_info['rank'],
+                'baverage': csv_info['baverage'],
+            }]
+
+        # 写回
+        c.execute("INSERT OR REPLACE INTO games_dynamic (game_id, json_data) VALUES (?, ?)",
+                  (game_id, json.dumps(dyn, ensure_ascii=False)))
+        updated += 1
+
+    conn.commit()
+    print(f"  ✅ CSV 快速更新完毕，更新 {updated} 个游戏")
+    return True
+
 def main():
     print("🚀 桌游星图 - XML API2 数据采集")
     print(f"   Token: {TOKEN[:8]}...{TOKEN[-4:]}")
@@ -433,19 +527,32 @@ def main():
 
     if todo_2:
         print(f"🔍 发现 {len(todo_2)} 个待补充的关联桌游")
-        crawl_new_games(conn, todo_2, "关联桌游")
+        crawl_new_games(conn, todo_2, "关联桌游", discover=False)
     else:
         print("✨ 无新增关联桌游")
 
     # =====================
-    # 第 3 步：刷新所有游戏的排名评分（每日核心任务）
-    # 只更新 games_dynamic，不动 games_raw（保护 primarylink）
+    # 第 3 步：刷新排名评分
+    #   - 每天：用 CSV 快速更新 rank/baverage/average/usersrated（< 1 秒）
+    #   - 周二：额外用 API 全量刷新 avgweight/numowned/best_players（~40 分钟）
     # =====================
     print("\n" + "=" * 60)
-    print("📊 第 3 步：刷新排名评分（每日更新）")
+    print("📊 第 3 步：刷新排名评分")
     print("=" * 60)
-    all_ids = list(get_fetched_ids(conn, 'games_raw'))
-    refresh_dynamic(conn, all_ids)
+
+    # 3a. 每天：CSV 快速更新
+    print("\n📄 [3a] CSV 快速更新排名（每天）...")
+    refresh_dynamic_from_csv(conn)
+
+    # 3b. 周二：API 全量刷新（补充 weight/numowned/best_players）
+    import datetime
+    is_tuesday = datetime.datetime.now().weekday() == 1
+    if is_tuesday:
+        print(f"\n🔄 [3b] 周二：API 全量刷新（含 weight/numowned/best_players）...")
+        all_ids = list(get_fetched_ids(conn, 'games_raw'))
+        refresh_dynamic(conn, all_ids)
+    else:
+        print(f"\n⏭️  [3b] 非周二，跳过 API 全量刷新")
 
     # 统计
     c = conn.cursor()
