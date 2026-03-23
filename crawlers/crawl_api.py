@@ -376,8 +376,13 @@ def crawl_new_games(conn, target_ids, batch_name="桌游", discover=True):
     print(f"\n🏁 {batch_name}新游戏采集完毕，发现 {len(all_discovered)} 个关联桌游")
     return all_discovered
 
-def refresh_dynamic(conn, target_ids):
-    """刷新已有游戏的排名评分（不覆盖 games_raw，保护 primarylink）"""
+def refresh_dynamic(conn, target_ids, rescan_relations=False):
+    """刷新已有游戏的排名评分（不覆盖 games_raw，保护 primarylink）
+    
+    rescan_relations: 若为 True，同时重新扫描每个游戏的关联关系，
+                      将新发现的关联写入 discovered_ids。
+                      用于修复历史遗漏（旧版爬虫 promo 过滤、新增扩展等）。
+    """
     already = get_fetched_ids(conn, 'games_raw')
     to_refresh = [gid for gid in target_ids if gid in already]
 
@@ -385,8 +390,10 @@ def refresh_dynamic(conn, target_ids):
         print("  无需刷新")
         return
 
-    print(f"📊 刷新 {len(to_refresh)} 个游戏的排名评分...\n")
+    label = "排名评分 + 关联重扫" if rescan_relations else "排名评分"
+    print(f"📊 刷新 {len(to_refresh)} 个游戏的{label}...\n")
     updated = 0
+    new_discovered = 0
 
     for i in range(0, len(to_refresh), BATCH_SIZE):
         batch = to_refresh[i:i+BATCH_SIZE]
@@ -406,6 +413,16 @@ def refresh_dynamic(conn, target_ids):
                 # 只更新 dynamic，不动 raw（保护 primarylink 等旧数据）
                 save_dynamic_only(conn, game_id, dynamic_data)
                 updated += 1
+
+                # 周一重扫：从最新 XML 数据中提取关联，补充 discovered_ids
+                if rescan_relations:
+                    related = extract_related_ids(raw_data, game_id)
+                    for r in related:
+                        c = conn.cursor()
+                        c.execute("SELECT 1 FROM discovered_ids WHERE game_id=?", (r['id'],))
+                        if not c.fetchone():
+                            save_discovered(conn, r['id'], r['source_id'], r['relation'])
+                            new_discovered += 1
             except Exception as e:
                 print(f"  ⚠️ 解析异常: {e}")
 
@@ -413,7 +430,9 @@ def refresh_dynamic(conn, target_ids):
         if i + BATCH_SIZE < len(to_refresh):
             time.sleep(SLEEP)
 
-    print(f"\n🏁 排名评分刷新完毕，更新 {updated} 个游戏")
+    print(f"\n🏁 {label}完毕，更新 {updated} 个游戏")
+    if rescan_relations:
+        print(f"  🔗 新发现关联桌游: {new_discovered} 个")
 
 # ============================================================
 # CSV 快速更新排名（不需要 API 请求）
@@ -544,13 +563,25 @@ def main():
     print("\n📄 [3a] CSV 快速更新排名（每天）...")
     refresh_dynamic_from_csv(conn)
 
-    # 3b. 周一：API 全量刷新（补充 weight/numowned/best_players）
+    # 3b. 周一：API 全量刷新（补充 weight/numowned/best_players）+ 关联重扫
     import datetime
     is_monday = datetime.datetime.now().weekday() == 0
     if is_monday:
-        print(f"\n🔄 [3b] 周一：API 全量刷新（含 weight/numowned/best_players）...")
+        print(f"\n🔄 [3b] 周一：API 全量刷新 + 关联重扫...")
         all_ids = list(get_fetched_ids(conn, 'games_raw'))
-        refresh_dynamic(conn, all_ids)
+        refresh_dynamic(conn, all_ids, rescan_relations=True)
+
+        # 3c. 周一追加：爬取重扫中新发现的关联桌游
+        already = get_fetched_ids(conn, 'games_raw')
+        c = conn.cursor()
+        c.execute("SELECT DISTINCT game_id FROM discovered_ids")
+        discovered = set(row[0] for row in c.fetchall())
+        todo_new = list(discovered - already)
+        if todo_new:
+            print(f"\n🔗 [3c] 关联重扫发现 {len(todo_new)} 个新桌游，开始补充采集...")
+            crawl_new_games(conn, todo_new, "重扫新增关联桌游", discover=False)
+        else:
+            print(f"\n✨ [3c] 关联重扫无新增")
     else:
         print(f"\n⏭️  [3b] 非周一，跳过 API 全量刷新")
 

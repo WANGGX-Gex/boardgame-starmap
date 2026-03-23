@@ -160,9 +160,6 @@ def extract_related_ids(data, source_id):
             linked_id = str(linked.get('objectid', ''))
             linked_name = linked.get('name', '')
             if linked_id and linked.get('objecttype') == 'thing':
-                # 过滤 Promo（名字中含 Promo 的跳过）
-                if linked_name and 'promo' in linked_name.lower():
-                    continue
                 related.append({
                     'id': linked_id,
                     'name': linked_name,

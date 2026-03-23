@@ -990,6 +990,53 @@ def main():
    {'无需操作' if not to_fill else f'填写 {TO_FILL_CSV} ({len(to_fill)}家) → 另存为 publisher_country_manual.csv → 重新运行'}
 {'='*60}""")
 
+    # 9. 自动更新 README.md 中的数据规模和更新时间
+    readme_path = os.path.join(BASE_DIR, 'README.md')
+    if os.path.exists(readme_path):
+        try:
+            from datetime import datetime
+            with open(readme_path, 'r', encoding='utf-8') as f:
+                readme = f.read()
+
+            core_games = sum(1 for n in nodes.values() if n['class']=='game' and n.get('is_core'))
+            related_games = m['game_nodes'] - core_games
+
+            # 替换数据规模表格
+            new_table = f"""| 类型 | 数量 |
+|------|------|
+| 桌游节点 | {m['game_nodes']:,}（核心 {core_games:,} + 关联 {related_games:,}）|
+| 人物节点 | {m['person_nodes']:,} |
+| 出版商节点 | {m['publisher_nodes']:,} |
+| 连线 | {m['total_links']:,} |"""
+
+            readme = re.sub(
+                r'\| 类型 \| 数量 \|.*?\| 连线 \| [\d,]+ \|',
+                new_table,
+                readme,
+                flags=re.DOTALL
+            )
+
+            # 替换更新时间
+            now_str = datetime.now().strftime('%Y-%m-%d %H:%M')
+            if '**最近数据更新：**' in readme:
+                readme = re.sub(
+                    r'\*\*最近数据更新：\*\*.*',
+                    f'**最近数据更新：** {now_str}',
+                    readme
+                )
+            else:
+                # 在 "数据来源" 之前插入
+                readme = readme.replace(
+                    '## 数据来源',
+                    f'**最近数据更新：** {now_str}\n\n## 数据来源'
+                )
+
+            with open(readme_path, 'w', encoding='utf-8') as f:
+                f.write(readme)
+            print(f"  📝 README.md 已自动更新（{now_str}）")
+        except Exception as e:
+            print(f"  ⚠️ README.md 更新失败: {e}")
+
     conn.close()
 
 
