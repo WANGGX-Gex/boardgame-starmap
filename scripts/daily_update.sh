@@ -62,13 +62,16 @@ if [ "$DAY_OF_WEEK" -eq 2 ]; then
 fi
 
 # ── 3. 补充出版商和人物（始终用旧版 API，各最多 30 分钟）──
+# macOS 没有 timeout 命令，用 perl 替代
+_timeout() { perl -e 'alarm shift; exec @ARGV' "$@"; }
+
 echo ""
 echo "🏢 [3/5] 补充出版商详情..."
-timeout 1800 python3 crawlers/crawl_publishers.py || echo "⚠️ 出版商采集异常或超时（30分钟），跳过"
+_timeout 1800 python3 crawlers/crawl_publishers.py || echo "⚠️ 出版商采集异常或超时（30分钟），跳过"
 
 echo ""
 echo "👤 [3/5] 补充人物详情..."
-timeout 1800 python3 crawlers/crawl_persons.py || echo "⚠️ 人物采集异常或超时（30分钟），跳过"
+_timeout 1800 python3 crawlers/crawl_persons.py || echo "⚠️ 人物采集异常或超时（30分钟），跳过"
 
 # ── 4. 数据清洗 ──
 echo ""
