@@ -534,7 +534,7 @@ def main():
     # =====================
     # 第 3 步：刷新排名评分
     #   - 每天：用 CSV 快速更新 rank/baverage/average/usersrated（< 1 秒）
-    #   - 周二：额外用 API 全量刷新 avgweight/numowned/best_players（~40 分钟）
+    #   - 周一：额外用 API 全量刷新 avgweight/numowned/best_players（~40 分钟）
     # =====================
     print("\n" + "=" * 60)
     print("📊 第 3 步：刷新排名评分")
@@ -544,15 +544,15 @@ def main():
     print("\n📄 [3a] CSV 快速更新排名（每天）...")
     refresh_dynamic_from_csv(conn)
 
-    # 3b. 周二：API 全量刷新（补充 weight/numowned/best_players）
+    # 3b. 周一：API 全量刷新（补充 weight/numowned/best_players）
     import datetime
-    is_tuesday = datetime.datetime.now().weekday() == 1
-    if is_tuesday:
-        print(f"\n🔄 [3b] 周二：API 全量刷新（含 weight/numowned/best_players）...")
+    is_monday = datetime.datetime.now().weekday() == 0
+    if is_monday:
+        print(f"\n🔄 [3b] 周一：API 全量刷新（含 weight/numowned/best_players）...")
         all_ids = list(get_fetched_ids(conn, 'games_raw'))
         refresh_dynamic(conn, all_ids)
     else:
-        print(f"\n⏭️  [3b] 非周二，跳过 API 全量刷新")
+        print(f"\n⏭️  [3b] 非周一，跳过 API 全量刷新")
 
     # 统计
     c = conn.cursor()

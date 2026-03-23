@@ -7,6 +7,9 @@
 
 set -euo pipefail
 
+# 强制 Python 不缓冲输出（否则日志不实时）
+export PYTHONUNBUFFERED=1
+
 PROJECT_DIR="$HOME/Coding/BoardGame_StarMap"
 LOG_DIR="$PROJECT_DIR/logs"
 DATE=$(date +%Y%m%d)
@@ -32,7 +35,9 @@ fi
 # ── 0. 从 GitHub 同步（拉取手动修正的 CSV 等）──
 echo ""
 echo "📥 [0/5] 同步 GitHub..."
+git stash --include-untracked -q 2>/dev/null || true
 git pull origin main --rebase || git pull origin main
+git stash pop -q 2>/dev/null || true
 
 # ── 1. 更新 Top 1000（每天下载最新 CSV）──
 echo ""
@@ -53,11 +58,11 @@ else
     fi
 fi
 
-# ── 2b. 周二补查 primarylink（旧版API，只查新增游戏）──
+# ── 2b. 周一补查 primarylink（旧版API，只查新增游戏）──
 DAY_OF_WEEK=$(date +%u)
-if [ "$DAY_OF_WEEK" -eq 2 ]; then
+if [ "$DAY_OF_WEEK" -eq 1 ]; then
     echo ""
-    echo "🔧 [2b] 周二：补查新增游戏的 primarylink..."
+    echo "🔧 [2b] 周一：补查新增游戏的 primarylink..."
     python3 crawlers/patch_primary.py || echo "⚠️ primarylink 补查异常"
 fi
 
