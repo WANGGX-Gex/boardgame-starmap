@@ -105,7 +105,7 @@
     padding: 10px 16px; cursor: pointer; display: flex; align-items: center; gap: 10px;
     transition: background 0.2s; border-bottom: 1px solid rgba(255,255,255,0.03);
   }
-  .search-item:hover { background: rgba(74, 158, 255, 0.08); }
+  .search-item:hover, .search-item.kb-active { background: rgba(74, 158, 255, 0.08); }
   .search-item .dot { width: 8px; height: 8px; border-radius: 50%; flex-shrink: 0; }
   .search-item .name { font-size: 13px; }
   .search-item .name-en { font-size: 11px; color: var(--text-dim); margin-left: 6px; }
@@ -520,7 +520,7 @@
   </div>
   <div class="search-wrapper">
     <span class="search-icon">⌕</span>
-    <input type="text" id="search-input" placeholder="搜索桌游、设计师、出版商...（/ 键聚焦）" autocomplete="off">
+    <input type="text" id="search-input" placeholder="搜索名称 / #排名 / id编号" autocomplete="off">
     <button class="search-clear" id="search-clear" onclick="clearSearch()">✕</button>
     <div class="search-results" id="search-results"></div>
   </div>
@@ -695,6 +695,14 @@
         <div class="help-relation"><span class="help-line reimplements"></span><strong>重制</strong>：A 基于 B 进行了重制 / 改良</div>
         <div class="help-relation"><span class="help-line integrates"></span><strong>兼容</strong>：两款游戏彼此独立，同时可以兼容游戏</div>
         <div class="help-relation"><span class="help-line contains"></span><strong>包含</strong>：常见于“大盒”，A 中包含了 B</div>
+      </div>
+    </div>
+    <div class="help-section">
+      <div class="help-section-title">搜索技巧</div>
+      <div class="help-relations" style="font-size:12px;color:var(--text-secondary);line-height:1.7">
+        <div><strong>#排名</strong>：输入 <code style="background:rgba(255,255,255,0.06);padding:1px 5px;border-radius:3px">#1</code> 精确跳转到 BGG 排名第 1 的桌游（仅 Top 1000）</div>
+        <div><strong>id编号</strong>：输入 <code style="background:rgba(255,255,255,0.06);padding:1px 5px;border-radius:3px">id174430</code> 精确跳转到该 BGG ID 的桌游</div>
+        <div><strong>快捷键</strong>：按 <code style="background:rgba(255,255,255,0.06);padding:1px 5px;border-radius:3px">/</code> 键可直接进入搜索框，↑↓ 选择结果，Enter 跳转</div>
       </div>
     </div>
     <div class="help-section">
@@ -1750,6 +1758,7 @@ function showDetail(node) {
   }
   const metaBits = [];
   if (node.year) metaBits.push(`${node.year}年`);
+  if (node.class === 'game' && node.bgg_id) metaBits.push(`BGG ID: ${node.bgg_id}`);
   if (metaBits.length) h += `<div class="header-meta">${metaBits.join(' · ')}</div>`;
   if (node.image_url) { header.classList.add('has-cover'); h += `<div class="header-cover"><img src="${node.image_url}" alt="${displayName(node)}"></div>`; } else { header.classList.remove('has-cover'); }
   header.innerHTML = h;
@@ -1880,13 +1889,14 @@ const searchInput = document.getElementById('search-input');
 const searchResults = document.getElementById('search-results');
 const searchWrapper = searchInput.closest('.search-wrapper');
 let searchDebounce = null;
+let searchKbIndex = -1;
 
 // Mobile: shorter placeholder
 function updateSearchPlaceholder() {
   if (window.innerWidth <= 920) {
     searchInput.placeholder = '请搜索...';
   } else {
-    searchInput.placeholder = '搜索桌游、设计师、出版商...（/ 键聚焦）';
+    searchInput.placeholder = '搜索名称 / #排名 / id编号';
   }
 }
 updateSearchPlaceholder();
@@ -1912,6 +1922,31 @@ searchInput.addEventListener('input', e => {
   searchDebounce = setTimeout(() => performSearch(q), 200);
 });
 
+searchInput.addEventListener('keydown', e => {
+  const items = searchResults.querySelectorAll('.search-item[data-node-id]');
+  if (!items.length || !searchResults.classList.contains('active')) return;
+  if (e.key === 'ArrowDown') {
+    e.preventDefault();
+    searchKbIndex = Math.min(searchKbIndex + 1, items.length - 1);
+    items.forEach((el, i) => el.classList.toggle('kb-active', i === searchKbIndex));
+    items[searchKbIndex].scrollIntoView({ block: 'nearest' });
+  } else if (e.key === 'ArrowUp') {
+    e.preventDefault();
+    searchKbIndex = Math.max(searchKbIndex - 1, 0);
+    items.forEach((el, i) => el.classList.toggle('kb-active', i === searchKbIndex));
+    items[searchKbIndex].scrollIntoView({ block: 'nearest' });
+  } else if (e.key === 'Enter') {
+    e.preventDefault();
+    if (searchKbIndex >= 0 && searchKbIndex < items.length) {
+      const nodeId = items[searchKbIndex].getAttribute('data-node-id');
+      if (nodeId) onSearchSelect(nodeId);
+    } else if (items.length === 1) {
+      const nodeId = items[0].getAttribute('data-node-id');
+      if (nodeId) onSearchSelect(nodeId);
+    }
+  }
+});
+
 searchInput.addEventListener('focus', () => {
   const q = searchInput.value.trim().toLowerCase();
   if (q.length >= 2) performSearch(q);
@@ -1924,15 +1959,39 @@ function performSearch(query) {
   const visibleIds = new Set(gd.nodes.map(n => n.id));
   const results = [];
 
-  rawData.nodes.forEach(n => {
-    if (isUnknownPublisher(n)) return;
-    const en = (n.name_en||'').toLowerCase();
-    const zh = (displayName(n)||'').toLowerCase();
-    const zhAlt = ((n.name_zh_cn||'') + ' ' + (n.name_zh_hant||'')).toLowerCase();
-    if (en.includes(query) || zh.includes(query) || zhAlt.includes(query)) {
-      results.push({ node: n, visible: visibleIds.has(n.id), score: (en.startsWith(query) || zh.startsWith(query)) ? 0 : 1 });
+  // ── #排名 精确搜索（仅 Top 1000）──
+  const rankMatch = query.match(/^#(\d+)$/);
+  if (rankMatch) {
+    const rankNum = parseInt(rankMatch[1]);
+    if (rankNum >= 1 && rankNum <= 1000) {
+      rawData.nodes.forEach(n => {
+        if (n.class === 'game' && n.rank === rankNum) {
+          results.push({ node: n, visible: visibleIds.has(n.id), score: 0 });
+        }
+      });
     }
-  });
+  }
+  // ── id精确搜索 ──
+  else if (/^id\d+$/i.test(query)) {
+    const bggIdStr = query.slice(2);
+    rawData.nodes.forEach(n => {
+      if (n.class === 'game' && String(n.bgg_id) === bggIdStr) {
+        results.push({ node: n, visible: visibleIds.has(n.id), score: 0 });
+      }
+    });
+  }
+  // ── 常规模糊搜索 ──
+  else {
+    rawData.nodes.forEach(n => {
+      if (isUnknownPublisher(n)) return;
+      const en = (n.name_en||'').toLowerCase();
+      const zh = (displayName(n)||'').toLowerCase();
+      const zhAlt = ((n.name_zh_cn||'') + ' ' + (n.name_zh_hant||'')).toLowerCase();
+      if (en.includes(query) || zh.includes(query) || zhAlt.includes(query)) {
+        results.push({ node: n, visible: visibleIds.has(n.id), score: (en.startsWith(query) || zh.startsWith(query)) ? 0 : 1 });
+      }
+    });
+  }
 
   results.sort((a,b) => {
     if (a.visible !== b.visible) return a.visible ? -1 : 1;
@@ -1948,10 +2007,10 @@ function performSearch(query) {
   }
 
   let html = '';
-  top.forEach(r => {
+  top.forEach((r, i) => {
     const n = r.node, color = CLASS_COLORS[n.class]||'#888', name = displayName(n);
     const alt = englishName(n) || secondaryZhName(n);
-    html += `<div class="search-item" style="${r.visible?'':'opacity:0.5'}" onclick="onSearchSelect('${n.id}')">
+    html += `<div class="search-item" data-index="${i}" data-node-id="${n.id}" style="${r.visible?'':'opacity:0.5'}" onclick="onSearchSelect('${n.id}')">
       <div class="dot" style="background:${color}"></div>
       <div><span class="name">${name}</span>${alt ? `<span class="name-en">${alt}</span>` : ''}${!r.visible ? '<span style="font-size:10px;color:var(--text-dim);margin-left:4px">(未显示)</span>' : ''}</div>
     </div>`;
@@ -1959,6 +2018,7 @@ function performSearch(query) {
 
   searchResults.innerHTML = html;
   searchResults.classList.add('active');
+  searchKbIndex = -1;
 }
 
 function onSearchSelect(nodeId) {
