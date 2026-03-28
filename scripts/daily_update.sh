@@ -15,7 +15,8 @@ LOG_DIR="$PROJECT_DIR/logs"
 DATE=$(date +%Y%m%d)
 LOG_FILE="$LOG_DIR/daily_update_${DATE}.log"
 
-mkdir -p "$LOG_DIR"
+VISITOR_DIR="$LOG_DIR/visitors"
+mkdir -p "$LOG_DIR" "$VISITOR_DIR"
 exec > >(tee -a "$LOG_FILE") 2>&1
 
 echo "=========================================="
@@ -32,21 +33,34 @@ else
     exit 1
 fi
 
-# ── 0. 从 GitHub 同步（拉取手动修正的 CSV 等）──
+# ── 0a. 拉取昨日访客报告（远程服务器于 08:55 生成）──
 echo ""
-echo "📥 [0/5] 同步 GitHub..."
+echo "📊 [0/6] 拉取昨日访客报告..."
+YESTERDAY=$(date -v-1d +%Y-%m-%d 2>/dev/null || date -d yesterday +%Y-%m-%d)
+REMOTE_REPORT="/root/visitor_logs/visitors_${YESTERDAY}.txt"
+LOCAL_REPORT="$VISITOR_DIR/visitors_${YESTERDAY}.txt"
+if scp -q volcano:"$REMOTE_REPORT" "$LOCAL_REPORT" 2>/dev/null; then
+    REAL_IPS=$(grep "真实访客唯一 IP" "$LOCAL_REPORT" | grep -o '[0-9]*$' || echo "?")
+    echo "  ✅ 已拉取（真实访客 IP：${REAL_IPS} 个） → logs/visitors/visitors_${YESTERDAY}.txt"
+else
+    echo "  ⚠️ 远程报告不存在（可能今天第一次运行），跳过"
+fi
+
+# ── 0b. 从 GitHub 同步（拉取手动修正的 CSV 等）──
+echo ""
+echo "📥 [1/6] 同步 GitHub..."
 git stash --include-untracked -q 2>/dev/null || true
 git pull origin main --rebase || git pull origin main
 git stash pop -q 2>/dev/null || true
 
 # ── 1. 更新 Top 1000（每天下载最新 CSV）──
 echo ""
-echo "📋 [1/5] 下载 BGG ranks CSV 并更新 Top 1000..."
+echo "📋 [2/6] 下载 BGG ranks CSV 并更新 Top 1000..."
 python3 crawlers/get_top_ids.py || echo "⚠️ Top 1000 更新失败，使用上次的列表"
 
 # ── 2. 采集桌游数据（API 优先，Legacy 兜底）──
 echo ""
-echo "🎲 [2/5] 采集桌游数据..."
+echo "🎲 [3/6] 采集桌游数据..."
 if python3 crawlers/crawl_api.py 2>&1; then
     echo "✅ XML API 采集成功"
 else
@@ -71,21 +85,21 @@ fi
 _timeout() { perl -e 'alarm shift; exec @ARGV' "$@"; }
 
 echo ""
-echo "🏢 [3/5] 补充出版商详情..."
+echo "🏢 [4/6] 补充出版商详情..."
 _timeout 1800 python3 crawlers/crawl_publishers.py || echo "⚠️ 出版商采集异常或超时（30分钟），跳过"
 
 echo ""
-echo "👤 [3/5] 补充人物详情..."
+echo "👤 [4/6] 补充人物详情..."
 _timeout 1800 python3 crawlers/crawl_persons.py || echo "⚠️ 人物采集异常或超时（30分钟），跳过"
 
 # ── 4. 数据清洗 ──
 echo ""
-echo "🧹 [4/5] 数据清洗..."
+echo "🧹 [5/6] 数据清洗..."
 python3 cleaning/clean_data_v3.py
 
 # ── 5. 推送到 GitHub ──
 echo ""
-echo "📤 [5/5] 推送到 GitHub..."
+echo "📤 [6/6] 推送到 GitHub..."
 
 # 复制输出文件到仓库根目录
 cp output/graph_data.json ./graph_data.json 2>/dev/null || true
